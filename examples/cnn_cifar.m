@@ -5,7 +5,7 @@ run(fullfile(fileparts(mfilename('fullpath')), ...
   '..', 'matlab', 'vl_setupnn.m')) ;
 
 opts.dataDir = fullfile('data','cifar') ;
-opts.expDir = fullfile('data','cifar-baseline') ;
+opts.expDir = fullfile('data','cifar-baseline_new') ;
 opts.imdbPath = fullfile(opts.expDir, 'imdb.mat');
 opts.train.batchSize = 100 ;
 opts.train.numEpochs = 20 ;

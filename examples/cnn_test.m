@@ -112,11 +112,14 @@ for epoch=1
         end
 
         net.layers{end}.class = labels ;
-        res = vl_simplenn(net, im, [], res, ...
+        res = vl_simplenn_new(net, im, [], res, ...
           'disableDropout', true, ...
           'conserveMemory', opts.conserveMemory, ...
           'sync', opts.sync) ;
-
+      
+        info.prob{fix(t/opts.batchSize)+1} = res(end).prob;
+        info.labels{fix(t/opts.batchSize)+1} = labels;
+        
         % print information
         batch_time = toc(batch_time) ;
         speed = numel(batch)/batch_time ;
@@ -124,6 +127,7 @@ for epoch=1
 
         fprintf(' %.2f s (%.1f images/s)', batch_time, speed) ;
         n = t + numel(batch) - 1 ;
+        info.error(fix(t/opts.batchSize)+1) = info.val.error(end)/n*100;
         fprintf(' err %.1f err5 %.1f', ...
           info.val.error(end)/n*100, info.val.topFiveError(end)/n*100) ;
         fprintf('\n') ;
