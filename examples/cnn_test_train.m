@@ -1,0 +1,137 @@
+function [net, info] = cnn_test(net, imdb, getBatch, varargin)
+
+opts.train = [] ;
+opts.val = [] ;
+opts.numEpochs = 300 ;
+opts.batchSize = 256 ;
+opts.useGpu = false ;
+opts.learningRate = 0.001 ;
+opts.continue = false ;
+opts.expDir = fullfile('data','exp') ;
+opts.conserveMemory = false ;
+opts.sync = true ;
+opts.prefetch = false ;
+opts.weightDecay = 0.0005 ;
+opts.momentum = 0.9 ;
+opts.errorType = 'multiclass' ;
+opts.plotDiagnostics = false ;
+opts = vl_argparse(opts, varargin) ;
+
+if ~exist(opts.expDir, 'dir'), mkdir(opts.expDir) ; end
+if isempty(opts.train), opts.train = find(imdb.images.set==1) ; end
+if isempty(opts.val), opts.val = find(imdb.images.set==2) ; end
+if isnan(opts.train), opts.train = [] ; end
+
+% -------------------------------------------------------------------------
+%                                                    Network initialization
+% -------------------------------------------------------------------------
+
+for i=1:numel(net.layers)
+  if ~strcmp(net.layers{i}.type,'conv'), continue; end
+  net.layers{i}.filtersMomentum = zeros(size(net.layers{i}.filters), ...
+    class(net.layers{i}.filters)) ;
+  net.layers{i}.biasesMomentum = zeros(size(net.layers{i}.biases), ...
+    class(net.layers{i}.biases)) ; %#ok<*ZEROLIKE>
+  if ~isfield(net.layers{i}, 'filtersLearningRate')
+    net.layers{i}.filtersLearningRate = 1 ;
+  end
+  if ~isfield(net.layers{i}, 'biasesLearningRate')
+    net.layers{i}.biasesLearningRate = 1 ;
+  end
+  if ~isfield(net.layers{i}, 'filtersWeightDecay')
+    net.layers{i}.filtersWeightDecay = 1 ;
+  end
+  if ~isfield(net.layers{i}, 'biasesWeightDecay')
+    net.layers{i}.biasesWeightDecay = 1 ;
+  end
+end
+
+if opts.useGpu
+  net = vl_simplenn_move(net, 'gpu') ;
+  for i=1:numel(net.layers)
+    if ~strcmp(net.layers{i}.type,'conv'), continue; end
+    net.layers{i}.filtersMomentum = gpuArray(net.layers{i}.filtersMomentum) ;
+    net.layers{i}.biasesMomentum = gpuArray(net.layers{i}.biasesMomentum) ;
+  end
+end
+
+% -------------------------------------------------------------------------
+%                                                        Train and validate
+% -------------------------------------------------------------------------
+
+rng(0) ;
+
+if opts.useGpu
+  one = gpuArray(single(1)) ;
+else
+  one = single(1) ;
+end
+
+info.train.objective = [] ;
+info.train.error = [] ;
+info.train.topFiveError = [] ;
+info.train.speed = [] ;
+info.val.objective = [] ;
+info.val.error = [] ;
+info.val.topFiveError = [] ;
+info.val.speed = [] ;
+
+if opts.useGpu
+  net = vl_simplenn_move(net, 'gpu') ;
+  for i=1:numel(net.layers)
+    if ~strcmp(net.layers{i}.type,'conv'), continue; end
+    net.layers{i}.filtersMomentum = gpuArray(net.layers{i}.filtersMomentum) ;
+    net.layers{i}.biasesMomentum = gpuArray(net.layers{i}.biasesMomentum) ;
+  end
+end
+
+train = opts.train(randperm(numel(opts.train))) ;
+% val = opts.val ;
+res = [] ;
+for epoch=1
+    info.train.objective(end+1) = 0 ;
+    info.train.error(end+1) = 0 ;
+    info.train.topFiveError(end+1) = 0 ;
+    info.train.speed(end+1) = 0 ;
+    info.val.objective(end+1) = 0 ;
+    info.val.error(end+1) = 0 ;
+    info.val.topFiveError(end+1) = 0 ;
+    info.val.speed(end+1) = 0 ;
+  % evaluation on validation set
+    for t=1:opts.batchSize:numel(train)
+        batch_time = tic ;
+        batch = train(t:min(t+opts.batchSize-1, numel(train))) ;
+        fprintf('validation: epoch %02d: processing batch %3d of %3d ...', epoch, ...
+                fix(t/opts.batchSize)+1, ceil(numel(train)/opts.batchSize)) ;
+        [im, labels] = getBatch(imdb, batch) ;
+        if opts.prefetch
+          nextBatch = train(t+opts.batchSize:min(t+2*opts.batchSize-1, numel(train))) ;
+          getBatch(imdb, nextBatch) ;
+        end
+        if opts.useGpu
+          im = gpuArray(im) ;
+        end
+
+        net.layers{end}.class = labels ;
+        res = vl_simplenn_new(net, im, [], res, ...
+          'disableDropout', true, ...
+          'conserveMemory', opts.conserveMemory, ...
+          'sync', opts.sync) ;
+      
+%         info.prob{fix(t/opts.batchSize)+1} = res(end).prob;
+        info.labels{fix(t/opts.batchSize)+1} = labels;
+        info.res{fix(t/opts.batchSize)+1} = res;
+        
+        % print information
+        batch_time = toc(batch_time) ;
+        speed = numel(batch)/batch_time ;
+        info.train = updateError(opts, info.train, net, res, batch_time) ;
+
+        fprintf(' %.2f s (%.1f images/s)', batch_time, speed) ;
+        n = t + numel(batch) - 1 ;
+        info.error(fix(t/opts.batchSize)+1) = info.train.error(end)/n*100;
+        fprintf(' err %.1f err5 %.1f', ...
+          info.train.error(end)/n*100, info.train.topFiveError(end)/n*100) ;
+        fprintf('\n') ;
+    end
+end
